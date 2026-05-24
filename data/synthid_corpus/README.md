@@ -73,3 +73,34 @@ uv run python scripts/synthid_corpus.py ingest path/to/*.png \
 
 uv run python scripts/synthid_corpus.py status   # counts by label / resolution / verification
 ```
+
+## Autonomous collection via Chrome MCP
+
+Generation can be driven through the browser (the account must be logged in):
+
+- **Gemini** (`gemini.google.com`): type `Create an image: <prompt>`, wait, hover the
+  result, click the download icon (top-right). Single, reliable click. Outputs
+  carry Google C2PA + SynthID. Occasionally the composer stalls in a
+  "generating" state -> start a New chat to reset.
+- **ChatGPT** (`chatgpt.com`): the UI download is flaky (the fullscreen viewer
+  races and can grab the previous image; the share-modal path works but is
+  multi-step). Reliable path is an in-page fetch of the rendered image, which
+  preserves the original bytes (C2PA intact, unlike a canvas re-encode):
+
+  ```js
+  // run in the ChatGPT tab via the browser MCP javascript tool
+  (async () => {
+    const imgs = [...document.querySelectorAll('img')].filter(i => i.naturalWidth >= 400);
+    const img = imgs[imgs.length - 1];                 // newest large image
+    const b = await (await fetch(img.currentSrc || img.src)).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'dl.png';
+    document.body.appendChild(a); a.click(); a.remove();
+    return 'size=' + b.size;                            // do NOT return the src (privacy guard blocks query strings)
+  })()
+  ```
+
+  Gotcha: confirm the returned `size` differs from the previous image before
+  ingesting -- if the new image has not finished rendering, the script grabs the
+  prior one (the corpus dedups by sha256, but the notes would mislabel it).
+  ChatGPT also shows an A/B "which is better?" picker; click Skip first.
