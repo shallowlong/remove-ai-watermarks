@@ -156,15 +156,15 @@ class TestIdentifyRealSamples:
         assert r.is_ai_generated is True
         assert any("IPTC" in w for w in r.watermarks)
 
-    def test_clean_photo_is_unknown_not_clean(self):
-        r = identify(SAMPLES_DIR / "not-ai-1.jpeg", check_visible=False)
+    def test_clean_photo_is_unknown_not_clean(self, clean_photo: Path):
+        r = identify(clean_photo, check_visible=False)
         assert r.is_ai_generated is None  # never asserted False
         assert r.platform is None
         assert r.confidence == "none"
         assert r.watermarks == []
 
-    def test_strip_caveat_always_present(self):
-        r = identify(SAMPLES_DIR / "not-ai-1.jpeg", check_visible=False)
+    def test_strip_caveat_always_present(self, clean_photo: Path):
+        r = identify(clean_photo, check_visible=False)
         assert any("not proof" in c for c in r.caveats)
 
     def test_returns_report_dataclass(self):

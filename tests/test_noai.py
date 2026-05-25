@@ -259,6 +259,29 @@ class TestParseChunkGuards:
         assert "OpenAI" in info["issuer"]  # issuer byte-search still robust
 
 
+class TestC2PADigitalSourceType:
+    """The three IPTC digitalSourceType variants drive the AI verdict.
+
+    Only *trained* and *composite-with-trained* mean AI-generated (and so imply
+    a SynthID proxy for a SynthID vendor); plain ``algorithmicMedia`` is
+    procedural (not trained) and must NOT be flagged as AI.
+    """
+
+    def test_plain_algorithmic_media_not_flagged_ai(self):
+        chunk = b"...name" + bytes([0x69]) + b"some-tool" + b" OpenAI algorithmicMedia"
+        info: dict = {}
+        _parse_c2pa_chunk(chunk, info)
+        assert info["source_type"] == "algorithmicMedia"
+        assert "synthid_watermark" not in info  # procedural, not AI-generated
+
+    def test_composite_with_trained_is_ai_and_synthid(self):
+        chunk = b"...name" + bytes([0x69]) + b"some-tool" + b" OpenAI compositeWithTrainedAlgorithmicMedia"
+        info: dict = {}
+        _parse_c2pa_chunk(chunk, info)
+        assert "compositeWithTrainedAlgorithmicMedia" in info["source_type"]
+        assert "synthid_watermark" in info  # AI-enhanced + OpenAI issuer
+
+
 # ── ISOBMFF (AVIF / HEIF / JPEG-XL container stripping) ──────────────
 
 FTYP = b"\x00\x00\x00\x18ftypavif\x00\x00\x00\x00avifmif1"  # 24-byte ftyp box

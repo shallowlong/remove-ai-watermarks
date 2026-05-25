@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+
+CORPUS_NEG_DIR = Path(__file__).resolve().parent.parent / "data" / "synthid_corpus" / "images" / "neg"
+
+
+@pytest.fixture
+def clean_photo() -> Path:
+    """A verified-negative real photo from the corpus neg/ set.
+
+    Used by the "non-AI image" assertions (no SynthID, verdict unknown). These
+    are real photos with no AI provenance, the ground truth for "must not false-
+    positive". Skips if the corpus is not checked out.
+    """
+    files = sorted(CORPUS_NEG_DIR.glob("*")) if CORPUS_NEG_DIR.exists() else []
+    if not files:
+        pytest.skip("no corpus neg/ images present")
+    return files[0]
 
 
 @pytest.fixture

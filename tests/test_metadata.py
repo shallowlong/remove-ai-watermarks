@@ -224,8 +224,8 @@ class TestSynthIDSource:
         assert synthid_source(SAMPLES_DIR / "firefly-1.png") is None
         assert "synthid_watermark" not in get_ai_metadata(SAMPLES_DIR / "firefly-1.png")
 
-    def test_non_ai_image_is_not_synthid_source(self):
-        assert synthid_source(SAMPLES_DIR / "not-ai-1.jpeg") is None
+    def test_non_ai_image_is_not_synthid_source(self, clean_photo: Path):
+        assert synthid_source(clean_photo) is None
 
 
 class TestSynthIDSourceNonPng:
@@ -376,6 +376,24 @@ class TestExifGenerator:
         path = tmp_path / "iphone.jpg"
         Image.new("RGB", (64, 64)).save(path, exif=exif)
         assert exif_generator(path) is None
+
+    def test_artist_tag_ai_tool_detected(self, tmp_path: Path):
+        # exif_generator also reads the EXIF Artist field for an AI token.
+        exif = piexif.dump({"0th": {piexif.ImageIFD.Artist: b"Midjourney"}, "Exif": {}, "GPS": {}, "1st": {}})
+        path = tmp_path / "artist.jpg"
+        Image.new("RGB", (64, 64)).save(path, exif=exif)
+        assert exif_generator(path) == "Midjourney"
+
+    def test_imagedescription_tag_ai_tool_detected(self, tmp_path: Path):
+        # ...and the EXIF ImageDescription field.
+        exif = piexif.dump(
+            {"0th": {piexif.ImageIFD.ImageDescription: b"Made with Stable Diffusion"}, "Exif": {}, "GPS": {}, "1st": {}}
+        )
+        path = tmp_path / "desc.jpg"
+        Image.new("RGB", (64, 64)).save(path, exif=exif)
+        result = exif_generator(path)
+        assert result is not None
+        assert "Stable Diffusion" in result
 
     def test_xmp_creatortool_scan_covers_unopenable(self, tmp_path: Path):
         # PIL can't open this fake HEIF; the raw XMP CreatorTool scan still works.

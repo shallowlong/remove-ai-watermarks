@@ -17,16 +17,21 @@ external oracle, recorded per image in `verified_via` (see below).
 ```
 data/synthid_corpus/
   README.md        # this protocol (committed)
-  manifest.csv     # labels + provenance (committed, reviewable)
-  images/          # the actual files (gitignored, local-only)
+  manifest.csv     # labels + provenance (committed; one row per tracked image)
+  images/          # the labeled corpus (committed)
     pos/           # SynthID present
-    neg/           # SynthID absent
+    neg/           # SynthID absent (incl. reviewed real photos)
     cleaned/       # our pipeline output from a pos image
+  refs/            # synthetic black/white calibration fills (gitignored, regenerable)
 ```
 
-Images are gitignored on purpose: the corpus is large, may contain personal or
-licensed content, and SynthID-positive outputs are best kept local. The
-`manifest.csv` (sha256 + labels + extracted metadata) is the durable artifact.
+The labeled images are committed so the corpus is reproducible and the removal
+regression set runs in CI. `manifest.csv` is kept in sync with the files on
+disk (one row per tracked image; dangling rows are pruned when files are
+removed). Before adding any image, confirm it carries no private or
+identifiable content you would not publish -- this is a public repo and git
+history is permanent. The synthetic `refs/` fills stay gitignored (regenerable,
+not part of the labeled set).
 
 ## Verification levels (`verified_via`)
 
@@ -58,7 +63,8 @@ For the **regression set**:
 - `neg` controls: non-AI photos and outputs from non-SynthID models (SD,
   Midjourney, Firefly) verified negative.
 
-Avoid personal or identifiable content; the corpus stays local.
+The corpus is committed to a public repo: review every image before adding it
+and keep out anything private or identifiable you would not publish.
 
 ## Ingesting
 
