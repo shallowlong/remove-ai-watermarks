@@ -12,14 +12,16 @@ Strips SynthID, C2PA Content Credentials, EXIF/XMP "Made with AI" labels, and vi
 
 If this tool saves you time, consider [sponsoring its development](https://github.com/sponsors/wiltodelta).
 
+> **Intended for lawful use only.** Publishing and running this software is lawful; responsibility for any downstream use, and for compliance with local law, rests entirely with the user. Some jurisdictions restrict removing an AI label as such (see [Legal](#legal)). The authors do not condone use for deception, fraud, or any unlawful activity.
+
 ## Features
 
 - **Visible watermark removal** — Gemini / Nano Banana sparkle logo (reverse alpha blending) and the Doubao "豆包AI生成" text strip (locate + mask + inpaint); fast, offline, deterministic, no GPU. `visible --mark auto` picks the right one
 - **Universal region eraser (`erase`)** — remove any logo / watermark / object inside boxes you specify, regardless of position or colour. Default cv2 inpainting (CPU, instant); optional big-LaMa via onnxruntime (`lama` extra) for higher quality
 - **Invisible watermark removal** — SynthID, StableSignature, TreeRing via diffusion-based regeneration (needs a local GPU, or run it with no setup on [raiw.cc](https://raiw.cc))
 - **AI metadata stripping** — EXIF, PNG text chunks, C2PA provenance manifests (PNG / JPEG / AVIF / HEIF / JPEG-XL, **MP4 / MOV / M4V / M4A** at the container level, and **WebM / MP3 / WAV / FLAC / OGG** losslessly via ffmpeg), XMP DigitalSourceType
-- **"Made with AI" label removal** — removes the metadata that triggers AI labels on Instagram, Facebook, X (Twitter)
-- **Analog Humanizer** — film grain and chromatic aberration to bypass AI image classifiers
+- **"Made with AI" label removal** — removes the AI-disclosure metadata that platforms read to apply automatic labels (useful for clearing a false-positive label from a human-edited photograph)
+- **Analog Humanizer** — optional film grain and chromatic aberration post-processing
 - **Smart Face Protection** — automatic extraction and blending of human faces to prevent AI distortion
 - **Batch processing** — process entire directories
 - **Detection** — three-stage NCC watermark detection with confidence scoring
@@ -340,10 +342,10 @@ Watermarking and provenance for AI-generated content is now regulated in several
 | Jurisdiction | Instrument | Status (May 2026) | Relevance |
 | --- | --- | --- | --- |
 | EU | AI Act, Article 50 | Transparency duties apply from **2 August 2026**. Legacy generative systems (placed on the market before that date) get a grandfathering period to **2 December 2026** for the Article 50(2) marking duty, under the Digital Omnibus (Commission proposal Nov 2025; co-legislator political agreement 7 May 2026). Article 50 guidelines and a marking Code of Practice are being finalised through 2026. | Removing mandated provenance markers with intent to deceive may be sanctioned under national implementations. |
-| US (federal) | COPIED Act | **Reintroduced April 2025; not enacted** (pending in the Senate). | If passed, would set NIST provenance standards and prohibit tampering with / removing provenance information. The tool itself is lawful; usage may not be. |
-| US (state) | CA AB 2655, TX SB 751, similar | TX SB 751 in force; **CA AB 2655 struck down** by a federal court (Aug 2025, Section 230 / First Amendment). | Content-specific (election deepfakes, sexual deepfakes). Not tool-specific. |
+| US (federal) | COPIED Act (S. 1396, 119th Cong.) | **Reintroduced April 2025; not enacted** (referred to Senate Commerce Committee). | If passed, would set NIST provenance standards and prohibit tampering with / removing provenance information. The tool itself is lawful; usage may not be. |
+| US (state) | CA AB 2655, TX SB 751 (2019), similar | TX SB 751 (2019) in force; **CA AB 2655 struck down** by a federal court (E.D. Cal., Aug 2025, *Kohls v. Bonta*) as preempted by **Section 230**; the court did not reach the First Amendment (the companion law AB 2839 was separately enjoined on First Amendment grounds). | Content-specific (election deepfakes, sexual deepfakes). Not tool-specific. |
 | US (state) | CA AB 853 (amends the California AI Transparency Act) | Core provider duties operative **2 August 2026** (delayed from 1 January 2026); large platforms 1 January 2027; capture devices 1 January 2028. | Covered providers (1M+ monthly users) must embed a latent disclosure that is "permanent or extraordinarily difficult to remove" and offer a free detection tool. Removing that disclosure is what this tool does. |
-| South Korea | AI Framework Act (Basic Act on AI), Article 31 | In force since **January 2026** (one-year transition after promulgation). | Art. 31(3): AI output "difficult to distinguish from reality" must be labeled so users "clearly recognize" it; the draft Enforcement Decree accepts a machine-readable (invisible-watermark) label. Artistic/creative works get a presentation exception. |
+| South Korea | AI Framework Act (Basic Act on AI), Article 31 | In force since **22 January 2026** (one-year transition after promulgation). | Art. 31(3): AI output "difficult to distinguish from reality" must be labeled so users "clearly recognize" it; the draft Enforcement Decree accepts a machine-readable (invisible-watermark) label. Artistic/creative works get a presentation exception. |
 | China | Measures for Labeling AI-Generated Content (+ GB 45438-2025) | In force since **1 September 2025**. | Mandatory explicit (visible) + implicit (metadata) labels across image / audio / video; tampering with, forging, or removing labels is prohibited. |
 | India | IT (Intermediary Guidelines and Digital Media Ethics Code) Amendment Rules, 2026 | In force since **20 February 2026** (notified 10 February 2026). | All "synthetically generated information" must be **prominently labelled** and carry **permanent metadata / a provenance identifier**; the rules expressly **prohibit modifying, suppressing, or removing** that label or metadata. Covers image, audio, and audio-visual content. |
 | UK | Online Safety Act 2023 / Ofcom guidance | In force, but **no statutory AI-provenance or watermarking obligation**. | Ofcom encourages watermarking / provenance metadata as voluntary "attribution measures"; platform duties, not user obligations. |
