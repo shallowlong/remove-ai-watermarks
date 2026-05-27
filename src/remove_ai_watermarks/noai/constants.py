@@ -122,6 +122,26 @@ C2PA_AI_TOOLS = {
     b"Firefly": "Firefly",
 }
 
+# C2PA ``c2pa.soft-binding`` algorithm identifiers -> the forensic-watermark
+# vendor that stamped the pixels. The manifest's ``alg`` field names the
+# watermark scheme even when the watermark itself cannot be decoded locally, so
+# a byte-scan for these (keyed on a distinctive prefix to catch all variants)
+# tells us a third-party forensic watermark is present and whose. Verified
+# against the official C2PA registry (github.com/c2pa-org/softbinding-algorithm-list).
+# Adobe TrustMark is additionally decodable locally (see ``trustmark_detector``);
+# the rest (Digimarc, Imatag, Steg.AI, etc.) are proprietary oracle-only decoders.
+C2PA_SOFT_BINDINGS = {
+    b"com.adobe.trustmark": "Adobe TrustMark",
+    b"com.digimarc": "Digimarc",
+    b"com.imatag.lamark": "Imatag (Lamark)",
+    b"ai.steg": "Steg.AI",
+    b"com.microsoft.invismark": "Microsoft InvisMark",
+    b"com.microsoft.wavmark": "Microsoft WavMark",
+    b"com.verimatrix": "Verimatrix",
+    b"com.nagra.nexguard": "NAGRA NexGuard",
+    b"com.aiwatermark": "AIWatermark",
+}
+
 # Lowercased substrings that mark an AI generator when found in an EXIF
 # ``Software`` / XMP ``CreatorTool`` value. Conservative on purpose: plain
 # editors like "Adobe Photoshop" or "GIMP" must NOT match (no AI token), so only

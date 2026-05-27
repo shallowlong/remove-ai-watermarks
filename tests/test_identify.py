@@ -311,6 +311,32 @@ class TestIdentifyXaiSignature:
         assert any("xAI/Grok" in w for w in r.watermarks)
 
 
+class TestIdentifySoftBinding:
+    """A C2PA soft-binding alg names a forensic-watermark vendor in the inventory."""
+
+    def test_soft_binding_vendor_listed(self, tmp_path: Path):
+        p = tmp_path / "sb.jpg"
+        p.write_bytes(b"\xff\xd8\xff\xe1 c2pa jumb com.digimarc.validate.1 \xff\xd9")
+        r = identify(p, check_visible=False, check_invisible=False)
+        assert any("Digimarc" in w for w in r.watermarks)
+        assert any(s.name == "soft_binding" for s in r.signals)
+
+
+class TestIdentifyIptcAi:
+    """IPTC 2025.1 AISystemUsed drives an AI verdict + platform attribution."""
+
+    def test_iptc_ai_system_attributed(self, tmp_path: Path):
+        p = tmp_path / "iptc.jpg"
+        p.write_bytes(
+            b"\xff\xd8\xff\xe1<x:xmpmeta><Iptc4xmpExt:AISystemUsed>Google Gemini"
+            b"</Iptc4xmpExt:AISystemUsed></x:xmpmeta>\xff\xd9"
+        )
+        r = identify(p, check_visible=False, check_invisible=False)
+        assert r.is_ai_generated is True
+        assert r.platform is not None
+        assert "Gemini" in r.platform
+
+
 # ── Open invisible watermark (SD/SDXL/FLUX) integration ─────────────
 
 from remove_ai_watermarks.invisible_watermark import is_available as _wm_available  # noqa: E402

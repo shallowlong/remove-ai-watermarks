@@ -16,13 +16,13 @@ If this tool saves you time, consider [sponsoring its development](https://githu
 
 - **Visible watermark removal** — Gemini / Nano Banana sparkle logo via reverse alpha blending (fast, offline, deterministic)
 - **Invisible watermark removal** — SynthID, StableSignature, TreeRing via diffusion-based regeneration (needs a local GPU, or run it with no setup on [raiw.cc](https://raiw.cc))
-- **AI metadata stripping** — EXIF, PNG text chunks, C2PA provenance manifests (PNG / JPEG / AVIF / HEIF / JPEG-XL), XMP DigitalSourceType
+- **AI metadata stripping** — EXIF, PNG text chunks, C2PA provenance manifests (PNG / JPEG / AVIF / HEIF / JPEG-XL, and **MP4 / MOV / M4V video** at the container level), XMP DigitalSourceType
 - **"Made with AI" label removal** — removes the metadata that triggers AI labels on Instagram, Facebook, X (Twitter)
 - **Analog Humanizer** — film grain and chromatic aberration to bypass AI image classifiers
 - **Smart Face Protection** — automatic extraction and blending of human faces to prevent AI distortion
 - **Batch processing** — process entire directories
 - **Detection** — three-stage NCC watermark detection with confidence scoring
-- **Provenance detection (`identify`)** — aggregate C2PA issuer, IPTC "Made with AI", embedded SD/ComfyUI params, EXIF/XMP generator tags, the SynthID metadata proxy, the visible sparkle, and the open SD/SDXL/FLUX invisible watermark into one origin-platform + watermark-inventory verdict (`--json` for machine output)
+- **Provenance detection (`identify`)** — aggregate C2PA issuer, the C2PA soft-binding forensic-watermark vendor (Adobe TrustMark, Digimarc, Imatag, ...), IPTC "Made with AI" plus the IPTC 2025.1 `AISystemUsed` field, embedded SD/ComfyUI params, EXIF/XMP generator tags, the xAI/Grok EXIF signature, the SynthID metadata proxy, the visible sparkle, the open SD/SDXL/FLUX invisible watermark, and (with the `trustmark` extra) the open Adobe TrustMark watermark into one origin-platform + watermark-inventory verdict (`--json` for machine output)
 
 ## Examples
 
@@ -51,7 +51,7 @@ If this tool saves you time, consider [sponsoring its development](https://githu
 
 > Visible watermarks (logo overlays) are currently used only by Google Gemini / Nano Banana. Other services rely on invisible watermarks and/or metadata. Our diffusion-based regeneration works against any invisible watermark in pixel or frequency domain.
 
-> **Detection:** `remove-ai-watermarks identify <image>` reports the origin platform and watermark inventory for all the signals above — C2PA issuer, IPTC "Made with AI", the China TC260 AIGC label, embedded generation params, EXIF/XMP generator tags, the SynthID metadata proxy, the visible sparkle, and (with the `[detect]` extra) the open SD/SDXL/FLUX invisible watermark. The SynthID *pixel* watermark has no local decoder, so it is reported as a metadata proxy only.
+> **Detection:** `remove-ai-watermarks identify <image>` reports the origin platform and watermark inventory for all the signals above — C2PA issuer, the C2PA soft-binding forensic-watermark vendor (TrustMark / Digimarc / Imatag / ...), IPTC "Made with AI" plus the IPTC 2025.1 `AISystemUsed` field, the China TC260 AIGC label, embedded generation params, EXIF/XMP generator tags, the xAI/Grok EXIF signature, the SynthID metadata proxy, the visible sparkle, and (with the `[detect]` / `[trustmark]` extras) the open SD/SDXL/FLUX and Adobe TrustMark invisible watermarks. SynthID and the proprietary soft-binding watermarks (Digimarc etc.) have no local decoder, so they are reported by metadata proxy / vendor name only.
 
 ## How it works
 
@@ -158,6 +158,14 @@ After installation the `remove-ai-watermarks` command is available system-wide.
 >
 > ```bash
 > pip install -e ".[detect]"   # or: uv pip install -e ".[detect]"
+> ```
+>
+> To also decode the open **Adobe TrustMark** watermark (behind Adobe Durable
+> Content Credentials), install the `trustmark` extra (pulls torch and downloads
+> model weights on first use):
+>
+> ```bash
+> pip install -e ".[trustmark]"   # or: uv pip install -e ".[trustmark]"
 > ```
 
 #### Invisible watermark removal
@@ -315,7 +323,8 @@ Watermarking and provenance for AI-generated content is now regulated in several
 | US (state) | CA AB 2655, TX SB 751, similar | TX SB 751 in force; **CA AB 2655 struck down** by a federal court (Aug 2025, Section 230 / First Amendment). | Content-specific (election deepfakes, sexual deepfakes). Not tool-specific. |
 | US (state) | CA AB 853 (amends the California AI Transparency Act) | Core provider duties operative **2 August 2026** (delayed from 1 January 2026); large platforms 1 January 2027; capture devices 1 January 2028. | Covered providers (1M+ monthly users) must embed a latent disclosure that is "permanent or extraordinarily difficult to remove" and offer a free detection tool. Removing that disclosure is what this tool does. |
 | South Korea | AI Framework Act (Basic Act on AI), Article 31 | In force since **January 2026** (one-year transition after promulgation). | Art. 31(3): AI output "difficult to distinguish from reality" must be labeled so users "clearly recognize" it; the draft Enforcement Decree accepts a machine-readable (invisible-watermark) label. Artistic/creative works get a presentation exception. |
-| China | Measures for Labeling AI-Generated Content (+ GB 45438-2025) | In force since **1 September 2025**. | Mandatory explicit (visible) + implicit (metadata) labels for AI content; tampering with or removing labels is prohibited. |
+| China | Measures for Labeling AI-Generated Content (+ GB 45438-2025) | In force since **1 September 2025**. | Mandatory explicit (visible) + implicit (metadata) labels across image / audio / video; tampering with, forging, or removing labels is prohibited. |
+| India | IT (Intermediary Guidelines and Digital Media Ethics Code) Amendment Rules, 2026 | In force since **20 February 2026** (notified 10 February 2026). | All "synthetically generated information" must be **prominently labelled** and carry **permanent metadata / a provenance identifier**; the rules expressly **prohibit modifying, suppressing, or removing** that label or metadata. Covers image, audio, and audio-visual content. |
 | UK | Online Safety Act 2023 / Ofcom guidance | In force, but **no statutory AI-provenance or watermarking obligation**. | Ofcom encourages watermarking / provenance metadata as voluntary "attribution measures"; platform duties, not user obligations. |
 
 ## Threat model
@@ -340,7 +349,12 @@ This tool is intended for legitimate purposes such as:
 - Removing false-positive "Made with AI" labels from human-edited photographs.
 - Security research and watermark robustness study.
 
-Removing AI provenance markers to misrepresent AI-generated content as human-created may violate the laws above, the DMCA, and platform terms of service. Users are solely responsible for ensuring their use complies with all applicable laws. The authors do not condone use of this tool for deception, fraud, or any activity that violates applicable laws or regulations.
+**Who bears the liability.** This is general-purpose software and is itself lawful to publish and run; legal responsibility attaches to the person who removes a marker and to how the result is then used, and the hinge is intent. Removing AI provenance to pass AI-generated content off as human-made, to commit fraud, to produce non-consensual deepfakes, or to conceal copyright infringement can expose the remover to liability. Two kinds of exposure are worth knowing:
+
+- **The downstream act.** Deception, fraud, defamation, IP infringement, or breaking a platform's terms — judged by intent and harm, not by the act of editing metadata itself. In the US, the **DMCA (17 U.S.C. § 1202)** specifically bars removing "copyright management information" *with intent to conceal or enable infringement*.
+- **The removal itself.** Some jurisdictions penalise tampering with the label/metadata as such, regardless of downstream use — notably **China** (Labeling Measures) and **India** (IT Amendment Rules 2026), which expressly prohibit removing or suppressing the AI label and provenance metadata. The US **COPIED Act** would do the same if enacted.
+
+Legitimate uses — publishing your own work, privacy (stripping metadata that leaks an account identifier), security / robustness research, or removing a false-positive "Made with AI" label from a human-edited photograph — are generally lawful. Users are solely responsible for ensuring their use complies with all applicable laws. The authors do not condone use of this tool for deception, fraud, or any activity that violates applicable laws or regulations. None of this is legal advice.
 
 ## License
 

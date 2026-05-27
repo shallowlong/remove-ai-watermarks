@@ -28,6 +28,7 @@ from remove_ai_watermarks.noai.constants import (
     C2PA_CHUNK_TYPE,
     C2PA_ISSUERS,
     C2PA_SIGNATURES,
+    C2PA_SOFT_BINDINGS,
     PNG_SIGNATURE,
     SYNTHID_C2PA_ISSUERS,
 )
@@ -174,6 +175,18 @@ def synthid_vendors_in(buffer: bytes) -> list[str]:
     return sorted({name for sig, name in C2PA_ISSUERS.items() if sig in buffer and sig in SYNTHID_C2PA_ISSUERS})
 
 
+def soft_binding_vendors_in(buffer: bytes) -> list[str]:
+    """Return forensic-watermark vendor names whose C2PA soft-binding ``alg``
+    identifier appears in ``buffer``.
+
+    A ``c2pa.soft-binding`` assertion names the watermark scheme that stamped the
+    pixels (Adobe TrustMark, Digimarc, Imatag, Steg.AI, ...). Shared by the PNG
+    caBX parser and the format-agnostic binary scan so both apply the same
+    C2PA_SOFT_BINDINGS rule against their respective bytes.
+    """
+    return sorted({name for sig, name in C2PA_SOFT_BINDINGS.items() if sig in buffer})
+
+
 def _parse_c2pa_chunk(chunk_data: bytes, c2pa_info: dict[str, Any]) -> None:
     """Parse C2PA chunk data and populate info dictionary."""
     c2pa_info["c2pa_manifest"] = f"C2PA manifest ({len(chunk_data)} bytes)"
@@ -237,6 +250,13 @@ def _parse_c2pa_chunk(chunk_data: bytes, c2pa_info: dict[str, Any]) -> None:
     if synthid_vendors and ai_source:
         c2pa_info["synthid_vendors"] = synthid_vendors
         c2pa_info["synthid_watermark"] = synthid_verdict(", ".join(synthid_vendors))
+
+    # Soft-binding: a forensic/third-party watermark vendor named in the
+    # manifest (Adobe TrustMark, Digimarc, ...), independent of the issuer.
+    soft_binding_vendors = soft_binding_vendors_in(chunk_data)
+    if soft_binding_vendors:
+        c2pa_info["soft_binding_vendors"] = soft_binding_vendors
+        c2pa_info["soft_binding"] = ", ".join(soft_binding_vendors)
 
 
 def extract_c2pa_chunk(image_path: Path) -> bytes | None:

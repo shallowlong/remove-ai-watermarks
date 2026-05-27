@@ -26,13 +26,15 @@ from remove_ai_watermarks.metadata import (
     AI_METADATA_KEYS,
     AIGC_MARKERS,
     C2PA_UUID,
+    IPTC_AI_FIELD_MARKERS,
     IPTC_AI_MARKERS,
     aigc_label,
     exif_generator,
     get_ai_metadata,
+    iptc_ai_system,
     xai_signature,
 )
-from remove_ai_watermarks.noai.c2pa import extract_c2pa_info
+from remove_ai_watermarks.noai.c2pa import extract_c2pa_info, soft_binding_vendors_in
 from remove_ai_watermarks.noai.constants import C2PA_AI_TOOLS, C2PA_ISSUERS
 
 if TYPE_CHECKING:
@@ -162,6 +164,17 @@ def _invisible_watermark(image_path: Path) -> str | None:
     return detect_invisible_watermark(image_path)
 
 
+def _trustmark(image_path: Path) -> str | None:
+    """Adobe TrustMark scheme name or None.
+
+    Optional: needs the ``trustmark`` decoder (extra ``trustmark``). Returns None
+    if it is not installed or no TrustMark watermark decodes.
+    """
+    from remove_ai_watermarks.trustmark_detector import detect_trustmark
+
+    return detect_trustmark(image_path)
+
+
 def identify(image_path: Path, *, check_visible: bool = True, check_invisible: bool = True) -> ProvenanceReport:
     """Identify an image's origin platform and watermark inventory.
 
@@ -213,6 +226,14 @@ def identify(image_path: Path, *, check_visible: bool = True, check_invisible: b
         if "OpenAI" in (" ".join(issuers) + synthid):
             caveats.append(_OPENAI_CAVEAT)
 
+    # ── C2PA soft-binding: a named forensic/third-party watermark vendor ─
+    # (Adobe TrustMark, Digimarc, Imatag, ...). Present in the manifest even when
+    # the watermark itself can't be decoded; names whose watermark stamped the pixels.
+    soft_binding = meta.get("soft_binding") or (", ".join(v) if (v := soft_binding_vendors_in(head)) else None)
+    if soft_binding:
+        signals.append(Signal("soft_binding", f"C2PA soft binding: {soft_binding}", "high"))
+        watermarks.append(f"Forensic watermark soft binding ({soft_binding})")
+
     # ── IPTC "Made with AI" (Meta etc.), only meaningful without C2PA ─
     iptc = any(m in head for m in IPTC_AI_MARKERS)
     if iptc and not has_c2pa:
@@ -221,6 +242,18 @@ def identify(image_path: Path, *, check_visible: bool = True, check_invisible: b
         caveats.append(_IPTC_ONLY_CAVEAT)
         if platform is None:
             platform = "Made-with-AI tag (e.g. Meta AI); platform not specified"
+
+    # ── IPTC 2025.1 AI-disclosure fields (Iptc4xmpExt:AISystemUsed etc.) ─
+    iptc_ai = any(m in head for m in IPTC_AI_FIELD_MARKERS)
+    if iptc_ai:
+        system = iptc_ai_system(image_path)
+        named = bool(system) and system != "fields present"
+        signals.append(
+            Signal("iptc_ai_system", f"IPTC AI disclosure ({system})" if named else "IPTC AI disclosure fields", "high")
+        )
+        watermarks.append(f"IPTC 2025.1 AI disclosure ({system})" if named else "IPTC 2025.1 AI disclosure fields")
+        if platform is None and named:
+            platform = f"{system} (IPTC AISystemUsed)"
 
     # ── China TC260 AIGC label (Doubao and other China-served gens) ──
     aigc = any(m in head for m in AIGC_MARKERS)
@@ -266,12 +299,29 @@ def identify(image_path: Path, *, check_visible: bool = True, check_invisible: b
         if platform is None:
             platform = f"{scheme} (open DWT-DCT watermark)"
 
+    # ── Adobe TrustMark invisible watermark (open decoder, no key) ───
+    # The watermark behind Adobe Durable Content Credentials. Decoded locally,
+    # but it binds provenance for human-authored content too, so it enriches the
+    # watermark inventory without by itself asserting AI origin.
+    if check_invisible and (tm_scheme := _trustmark(image_path)) is not None:
+        signals.append(Signal("trustmark", tm_scheme, "high"))
+        watermarks.append(f"Adobe TrustMark invisible watermark ({tm_scheme})")
+        if platform is None:
+            platform = "Adobe (TrustMark / Content Credentials)"
+
     # ── Verdict so far (metadata + embedded watermark) ──────────────
     invisible_wm = any(s.name == "invisible_watermark" for s in signals)
     exif_gen = any(s.name == "exif_generator" for s in signals)
     xai_sig = any(s.name == "xai_signature" for s in signals)
     ai_from_metadata = bool(
-        (has_c2pa and (c2pa_is_ai or synthid)) or iptc or aigc or local_keys or invisible_wm or exif_gen or xai_sig
+        (has_c2pa and (c2pa_is_ai or synthid))
+        or iptc
+        or iptc_ai
+        or aigc
+        or local_keys
+        or invisible_wm
+        or exif_gen
+        or xai_sig
     )
 
     # ── Visible Gemini sparkle (fallback for stripped-metadata case) ─

@@ -23,12 +23,24 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from remove_ai_watermarks.metadata import C2PA_UUID
+from remove_ai_watermarks.metadata import (
+    AIGC_MARKERS,
+    C2PA_UUID,
+    IPTC_AI_FIELD_MARKERS,
+    IPTC_AI_MARKERS,
+)
 
-# Top-level box types that carry C2PA payload. ``uuid`` boxes are checked
-# against ``C2PA_UUID`` before being stripped; ``jumb`` boxes are always
-# stripped (JPEG-XL uses them exclusively for JUMBF).
+# Top-level box types that may carry AI provenance. ``uuid`` boxes are checked
+# against ``C2PA_UUID`` / AI-label markers before being stripped; ``jumb`` boxes
+# are always stripped (JPEG-XL uses them exclusively for JUMBF).
 C2PA_BOX_TYPES: frozenset[bytes] = frozenset({b"uuid", b"jumb"})
+
+# AI-label byte markers (TC260 AIGC, IPTC "Made with AI", IPTC 2025.1 AI fields)
+# whose presence inside an XMP ``uuid`` box means the box carries an AI label.
+# Matching the payload rather than a fixed XMP UUID avoids the XMP-box UUID
+# byte-order ambiguity and stays surgical: only AI-bearing XMP is dropped, plain
+# XMP (copyright, camera info) is kept.
+_AI_LABEL_MARKERS: tuple[bytes, ...] = AIGC_MARKERS + IPTC_AI_MARKERS + IPTC_AI_FIELD_MARKERS
 
 
 def _iter_top_level_boxes(data: bytes) -> Iterator[tuple[int, int, bytes, int]]:
@@ -67,12 +79,22 @@ def is_isobmff(data: bytes) -> bool:
 
 
 def strip_c2pa_boxes(data: bytes) -> tuple[bytes, int]:
-    """Return ``(cleaned_bytes, stripped_count)``.
+    """Return ``(cleaned_bytes, stripped_count)`` with AI-provenance boxes removed.
 
-    Walks top-level boxes; drops any ``uuid`` box whose UUID equals
-    ``C2PA_UUID`` and any ``jumb`` box (JPEG-XL JUMBF container). All other
-    boxes are emitted verbatim. If the input is not ISOBMFF-shaped, returns
-    it unchanged.
+    Walks top-level boxes and drops:
+    - any ``uuid`` box whose UUID equals ``C2PA_UUID`` (a C2PA manifest);
+    - any ``uuid`` box whose payload carries an AI-label marker (an XMP packet
+      with a TC260 / IPTC / IPTC-2025.1 AI field -- caught by content, not by the
+      XMP UUID, so it works regardless of the UUID's byte order, and leaves plain
+      non-AI XMP intact);
+    - any ``jumb`` box (JPEG-XL JUMBF container).
+
+    All other boxes (incl. ``mdat`` / codestream) are emitted verbatim, so pixel
+    and audio data is preserved bit-for-bit. Non-ISOBMFF input is returned
+    unchanged. Despite the name this also covers MP4/MOV/M4A video and audio
+    (all ISOBMFF). NOTE: EXIF/XMP stored as *items inside the ``meta`` box*
+    (typical for AVIF/HEIF images) is not removed -- that needs meta-box surgery
+    and is a documented limitation.
     """
     if not is_isobmff(data):
         return data, 0
@@ -80,14 +102,15 @@ def strip_c2pa_boxes(data: bytes) -> tuple[bytes, int]:
     out = bytearray()
     stripped = 0
     for start, end, box_type, payload_off in _iter_top_level_boxes(data):
-        if box_type in C2PA_BOX_TYPES:
-            if box_type == b"uuid":
-                # uuid boxes carry the 16-byte UUID immediately after the type.
-                if payload_off + 16 <= end and data[payload_off : payload_off + 16] == C2PA_UUID:
-                    stripped += 1
-                    continue
-            else:  # b"jumb"
+        if box_type == b"uuid":
+            # uuid boxes carry the 16-byte UUID immediately after the type.
+            is_c2pa = payload_off + 16 <= end and data[payload_off : payload_off + 16] == C2PA_UUID
+            has_ai_label = any(marker in data[payload_off:end] for marker in _AI_LABEL_MARKERS)
+            if is_c2pa or has_ai_label:
                 stripped += 1
                 continue
+        elif box_type == b"jumb":
+            stripped += 1
+            continue
         out.extend(data[start:end])
     return bytes(out), stripped

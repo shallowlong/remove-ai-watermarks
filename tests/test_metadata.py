@@ -14,6 +14,7 @@ from remove_ai_watermarks.metadata import (
     exif_generator,
     get_ai_metadata,
     has_ai_metadata,
+    iptc_ai_system,
     remove_ai_metadata,
     synthid_source,
     xai_signature,
@@ -567,3 +568,137 @@ class TestAIGCRealSample:
     def test_doubao_detected_as_ai(self):
         assert has_ai_metadata(SAMPLES_DIR / "doubao-1.png")
         assert "aigc_label" in get_ai_metadata(SAMPLES_DIR / "doubao-1.png")
+
+
+class TestSoftBinding:
+    """C2PA soft-binding alg identifier -> forensic-watermark vendor name."""
+
+    def test_vendors_in_recognizes_known_algs(self):
+        from remove_ai_watermarks.noai.c2pa import soft_binding_vendors_in
+
+        assert soft_binding_vendors_in(b"...alg...com.adobe.trustmark.P...") == ["Adobe TrustMark"]
+        assert soft_binding_vendors_in(b"com.digimarc.validate.1") == ["Digimarc"]
+        assert soft_binding_vendors_in(b"ai.steg.api blah") == ["Steg.AI"]
+
+    def test_vendors_in_empty_when_absent(self):
+        from remove_ai_watermarks.noai.c2pa import soft_binding_vendors_in
+
+        assert soft_binding_vendors_in(b"no soft binding here") == []
+
+    def test_get_ai_metadata_surfaces_soft_binding(self, tmp_path: Path):
+        # Non-PNG binary-scan path: a manifest naming a soft-binding vendor.
+        p = tmp_path / "fake.jpg"
+        p.write_bytes(b"\xff\xd8\xff\xe1 c2pa jumb com.adobe.trustmark.P \xff\xd9")
+        assert get_ai_metadata(p).get("soft_binding") == "Adobe TrustMark"
+
+
+class TestIptcAiFields:
+    """IPTC 2025.1 AI-disclosure XMP properties (Iptc4xmpExt:AISystemUsed etc.)."""
+
+    def test_detects_ai_system_used_element_form(self, tmp_path: Path):
+        p = tmp_path / "iptc_ai.jpg"
+        p.write_bytes(
+            b"\xff\xd8\xff\xe1<x:xmpmeta><Iptc4xmpExt:AISystemUsed>ChatGPT DALL-E"
+            b"</Iptc4xmpExt:AISystemUsed></x:xmpmeta>\xff\xd9"
+        )
+        assert has_ai_metadata(p) is True
+        assert iptc_ai_system(p) == "ChatGPT DALL-E"
+        assert "ChatGPT DALL-E" in get_ai_metadata(p)["ai_system"]
+
+    def test_attribute_serialization(self, tmp_path: Path):
+        p = tmp_path / "attr.jpg"
+        p.write_bytes(b'\xff\xd8\xff\xe1 Iptc4xmpExt:AISystemUsed="Google Gemini" \xff\xd9')
+        assert iptc_ai_system(p) == "Google Gemini"
+
+    def test_present_without_value(self, tmp_path: Path):
+        # A disclosure field with no extractable value still flags presence.
+        p = tmp_path / "novalue.jpg"
+        p.write_bytes(b"\xff\xd8\xff\xe1 Iptc4xmpExt:AIPromptWriterName \xff\xd9")
+        assert iptc_ai_system(p) == "fields present"
+        assert has_ai_metadata(p) is True
+
+    def test_clean_image_none(self, tmp_clean_png: Path):
+        assert iptc_ai_system(tmp_clean_png) is None
+
+
+# Synthetic MP4 (ISOBMFF): ftyp + C2PA uuid box + mdat. Same box format as AVIF.
+_MP4_FTYP = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+_MP4_MDAT = b"\x00\x00\x00\x10mdat" + b"videodat"
+
+
+class TestVideoC2pa:
+    """C2PA in MP4 (ISOBMFF) -- detect + strip, reusing the image box walker."""
+
+    def test_detects_c2pa_in_mp4(self, tmp_path: Path):
+        from remove_ai_watermarks.metadata import C2PA_UUID
+
+        uuid_box = b"\x00\x00\x00\x20uuid" + C2PA_UUID + b"manifest"
+        p = tmp_path / "ai.mp4"
+        p.write_bytes(_MP4_FTYP + uuid_box + _MP4_MDAT)
+        assert has_ai_metadata(p) is True
+
+    def test_strips_c2pa_in_mp4(self, tmp_path: Path):
+        from remove_ai_watermarks.metadata import C2PA_UUID
+
+        uuid_box = b"\x00\x00\x00\x20uuid" + C2PA_UUID + b"manifest"
+        src = tmp_path / "in.mp4"
+        src.write_bytes(_MP4_FTYP + uuid_box + _MP4_MDAT)
+        out = tmp_path / "out.mp4"
+        remove_ai_metadata(src, out)
+        assert out.read_bytes() == _MP4_FTYP + _MP4_MDAT
+        assert has_ai_metadata(out) is False
+
+
+class TestIsobmffMetadataRemoval:
+    """Container-level AI-provenance stripping across ISOBMFF image/video/audio."""
+
+    def test_strips_ai_xmp_uuid_box(self):
+        # A uuid box carrying a TC260 AIGC label is dropped by content match,
+        # regardless of the (non-C2PA) XMP UUID's byte order.
+        from remove_ai_watermarks.noai.isobmff import strip_c2pa_boxes
+
+        xmp_uuid = bytes(range(16))  # arbitrary, not the C2PA UUID
+        payload = b'<x:xmpmeta><TC260:AIGC>{"Label":"1"}</TC260:AIGC></x:xmpmeta>'
+        box = (24 + len(payload)).to_bytes(4, "big") + b"uuid" + xmp_uuid + payload
+        cleaned, stripped = strip_c2pa_boxes(_MP4_FTYP + box + _MP4_MDAT)
+        assert stripped == 1
+        assert cleaned == _MP4_FTYP + _MP4_MDAT
+
+    def test_keeps_plain_non_ai_xmp(self):
+        # A uuid box with ordinary (non-AI) XMP must be preserved.
+        from remove_ai_watermarks.noai.isobmff import strip_c2pa_boxes
+
+        xmp_uuid = bytes(range(16))
+        payload = b"<x:xmpmeta><dc:rights>(c) me</dc:rights></x:xmpmeta>"
+        box = (24 + len(payload)).to_bytes(4, "big") + b"uuid" + xmp_uuid + payload
+        cleaned, stripped = strip_c2pa_boxes(_MP4_FTYP + box + _MP4_MDAT)
+        assert stripped == 0
+        assert cleaned == _MP4_FTYP + box + _MP4_MDAT
+
+    def test_m4a_c2pa_stripped(self, tmp_path: Path):
+        from remove_ai_watermarks.metadata import C2PA_UUID
+
+        uuid_box = b"\x00\x00\x00\x20uuid" + C2PA_UUID + b"manifest"
+        src = tmp_path / "voice.m4a"
+        src.write_bytes(_MP4_FTYP + uuid_box + _MP4_MDAT)
+        out = tmp_path / "clean.m4a"
+        remove_ai_metadata(src, out)
+        assert out.read_bytes() == _MP4_FTYP + _MP4_MDAT
+
+    def test_content_sniff_routes_unknown_suffix(self, tmp_path: Path):
+        # An ISOBMFF file with a non-standard extension is still box-stripped.
+        from remove_ai_watermarks.metadata import C2PA_UUID
+
+        uuid_box = b"\x00\x00\x00\x20uuid" + C2PA_UUID + b"manifest"
+        src = tmp_path / "mystery.bin"
+        src.write_bytes(_MP4_FTYP + uuid_box + _MP4_MDAT)
+        out = tmp_path / "out.bin"
+        remove_ai_metadata(src, out)
+        assert out.read_bytes() == _MP4_FTYP + _MP4_MDAT
+
+    def test_unsupported_container_raises(self, tmp_path: Path):
+        src = tmp_path / "audio.mp3"
+        src.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00 fake mp3 frames")
+        out = tmp_path / "out.mp3"
+        with pytest.raises(ValueError, match="not supported"):
+            remove_ai_metadata(src, out)

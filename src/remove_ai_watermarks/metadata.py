@@ -74,6 +74,29 @@ IPTC_AI_MARKERS: tuple[bytes, ...] = (
     b"compositeWithTrainedAlgorithmicMedia",
 )
 
+# IPTC Photo Metadata 2025.1 (published 2025-11-27) added explicit AI-disclosure
+# XMP properties in the Iptc4xmpExt namespace. Their mere presence is an AI
+# signal; ``AISystemUsed`` additionally carries the generator name. Property
+# tokens verified against the IPTC 2025.1 specification.
+IPTC_AI_FIELD_MARKERS: tuple[bytes, ...] = (
+    b"AISystemUsed",
+    b"AISystemVersionUsed",
+    b"AIPromptInformation",
+    b"AIPromptWriterName",
+)
+
+# ISOBMFF containers whose AI-provenance boxes ``remove_ai_metadata`` strips at
+# the container level (image, video, audio -- all ISOBMFF). A content sniff
+# (``ftyp``) is also accepted, so this is a fast-path hint, not the sole gate.
+_ISOBMFF_EXTS: frozenset[str] = frozenset({".avif", ".heif", ".heic", ".jxl", ".mp4", ".mov", ".m4v", ".m4a"})
+
+# Non-ISOBMFF audio/video we can DETECT (binary scan) but not strip at the
+# container level (EBML / framed / RIFF need re-encoding). remove_ai_metadata
+# fails clearly on these rather than crashing in the image path.
+_UNSUPPORTED_CONTAINER_EXTS: frozenset[str] = frozenset(
+    {".webm", ".mkv", ".mka", ".mp3", ".wav", ".flac", ".ogg", ".oga", ".opus", ".aac"}
+)
+
 # China's mandatory AI-content labeling (TC260, the national cybersecurity
 # standards committee). AI generators serving China embed an XMP block in the
 # TC260 namespace -- ``<TC260:AIGC>{"Label":"1",...}``. Doubao (ByteDance) uses
@@ -155,6 +178,9 @@ def has_ai_metadata(image_path: Path) -> bool:
         return True
     if any(marker in data for marker in IPTC_AI_MARKERS):
         return True
+    # IPTC 2025.1 AI-disclosure XMP properties (their presence flags AI content).
+    if any(marker in data for marker in IPTC_AI_FIELD_MARKERS):
+        return True
     # xAI / Grok: no C2PA/IPTC/XMP -- only the EXIF Signature + UUID-Artist pair.
     return xai_signature(image_path)
 
@@ -181,6 +207,26 @@ def aigc_label(image_path: Path) -> dict[str, str] | None:
     except ValueError:
         return None
     return {str(k): str(v) for k, v in parsed.items()} if isinstance(parsed, dict) else None
+
+
+def iptc_ai_system(image_path: Path) -> str | None:
+    """Return an IPTC 2025.1 AI-disclosure note if the file carries those XMP
+    properties, else None.
+
+    IPTC Photo Metadata 2025.1 added ``Iptc4xmpExt`` AI-disclosure properties
+    (see ``IPTC_AI_FIELD_MARKERS``); their presence alone flags AI content, and
+    ``AISystemUsed`` names the generator. Returns the ``AISystemUsed`` value when
+    extractable, otherwise the literal ``"fields present"``. Container-agnostic
+    raw-byte scan; handles both XMP element and attribute serializations.
+    """
+    with open(image_path, "rb") as f:
+        data = f.read(1024 * 1024)
+    if not any(marker in data for marker in IPTC_AI_FIELD_MARKERS):
+        return None
+    match = re.search(rb"AISystemUsed[=:\s]*[\"'>]\s*([^<\"']{1,120})", data)
+    if match and (value := match.group(1).decode("utf-8", "replace").strip()):
+        return value
+    return "fields present"
 
 
 def synthid_source(image_path: Path) -> str | None:
@@ -380,7 +426,7 @@ def get_ai_metadata(image_path: Path) -> dict[str, str]:
     """
     from PIL import Image
 
-    from remove_ai_watermarks.noai.c2pa import extract_c2pa_info, synthid_verdict
+    from remove_ai_watermarks.noai.c2pa import extract_c2pa_info, soft_binding_vendors_in, synthid_verdict
 
     result: dict[str, str] = {}
 
@@ -410,14 +456,21 @@ def get_ai_metadata(image_path: Path) -> dict[str, str]:
         "source_type",
         "actions",
         "synthid_watermark",
+        "soft_binding",
     ):
         if key in c2pa:
             result.setdefault(key, str(c2pa[key]))
 
-    # Non-PNG containers (JPEG/WebP/AVIF): extract_c2pa_info is PNG-only, so
-    # fall back to the format-agnostic source check for the SynthID verdict.
+    # Non-PNG containers (JPEG/WebP/AVIF/MP4): extract_c2pa_info is PNG-only, so
+    # fall back to the format-agnostic source check for the SynthID verdict and
+    # the soft-binding (forensic-watermark vendor) scan.
     if "synthid_watermark" not in result and (vendor := synthid_source(image_path)):
         result.setdefault("synthid_watermark", synthid_verdict(vendor))
+    if "soft_binding" not in result:
+        with open(image_path, "rb") as f:
+            head = f.read(1024 * 1024)
+        if vendors := soft_binding_vendors_in(head):
+            result["soft_binding"] = ", ".join(vendors)
 
     # China TC260 AI-content label (Doubao and other China-served generators).
     if aigc := aigc_label(image_path):
@@ -427,6 +480,10 @@ def get_ai_metadata(image_path: Path) -> dict[str, str]:
     # xAI / Grok EXIF signature scheme (its only provenance signal).
     if xai_signature(image_path):
         result.setdefault("xai_signature", "xAI/Grok EXIF signature (Artist UUID + Signature blob)")
+
+    # IPTC 2025.1 AI-disclosure XMP fields (Iptc4xmpExt:AISystemUsed etc.).
+    if system := iptc_ai_system(image_path):
+        result.setdefault("ai_system", f"IPTC 2025.1 AI disclosure ({system})")
     return result
 
 
@@ -455,18 +512,33 @@ def remove_ai_metadata(
     if output_path is None:
         output_path = source_path
 
-    # AVIF/HEIF/JPEG-XL: strip C2PA boxes at the container level without
-    # re-encoding. Avoids needing PIL plugins (pillow-heif / pillow-jxl) and
-    # preserves pixel data bit-for-bit.
-    if source_path.suffix.lower() in (".avif", ".heif", ".heic", ".jxl"):
-        from remove_ai_watermarks.noai.isobmff import strip_c2pa_boxes
+    # ISOBMFF containers (AVIF/HEIF/JPEG-XL images, MP4/MOV/M4V video, M4A audio):
+    # strip C2PA + AI-label boxes at the container level without re-encoding.
+    # Avoids needing PIL plugins (pillow-heif / pillow-jxl) and preserves the
+    # codestream bit-for-bit. MP4/MOV/M4A are ISOBMFF too, so the same top-level
+    # uuid/jumb box walker applies. Route by suffix OR by an ``ftyp`` content
+    # sniff, so a correctly-shaped container is handled whatever its extension.
+    from remove_ai_watermarks.noai.isobmff import is_isobmff, strip_c2pa_boxes
 
+    with open(source_path, "rb") as f:
+        head = f.read(12)
+    if source_path.suffix.lower() in _ISOBMFF_EXTS or is_isobmff(head):
         data = source_path.read_bytes()
         cleaned, stripped = strip_c2pa_boxes(data)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(cleaned)
-        logger.info("Stripped %d C2PA box(es) → %s", stripped, output_path)
+        logger.info("Stripped %d AI-provenance box(es) → %s", stripped, output_path)
         return output_path
+
+    # Containers we can detect (via identify's byte scan) but cannot strip at the
+    # container level: non-ISOBMFF audio/video (Matroska/WebM are EBML; MP3 is
+    # framed; WAV is RIFF). Re-encoding them is out of scope, so fail clearly
+    # rather than crash in the PIL image path below.
+    if source_path.suffix.lower() in _UNSUPPORTED_CONTAINER_EXTS:
+        raise ValueError(
+            f"container-level metadata removal is not supported for {source_path.suffix} "
+            "(detection via `identify` still works); re-encode it with a media tool to strip metadata"
+        )
 
     # Read image and filter metadata
     with Image.open(source_path) as img:
