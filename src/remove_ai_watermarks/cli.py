@@ -460,6 +460,12 @@ def cmd_erase(
     default=0,
     help="Cap long side (px) before diffusion; 0 = native (best quality, like raiw.cc). Raise only on GPU/MPS OOM.",
 )
+@click.option(
+    "--protect-text",
+    is_flag=True,
+    default=False,
+    help="Preserve detected text (incl. CJK) via Differential Diffusion. SDXL default pipeline only.",
+)
 @click.pass_context
 def cmd_invisible(
     ctx: click.Context,
@@ -473,6 +479,7 @@ def cmd_invisible(
     hf_token: str | None,
     humanize: float,
     max_resolution: int,
+    protect_text: bool,
 ) -> None:
     """Remove invisible AI watermarks (SynthID, StableSignature, TreeRing).
 
@@ -519,6 +526,7 @@ def cmd_invisible(
         guidance_scale=None,
         seed=seed,
         humanize=humanize,
+        protect_text=protect_text,
         max_resolution=max_resolution,
     )
     elapsed = time.monotonic() - t0
@@ -671,6 +679,12 @@ def cmd_identify(ctx: click.Context, source: Path, no_visible: bool, as_json: bo
     default=0,
     help="Cap long side (px) before diffusion; 0 = native (best quality, like raiw.cc). Raise only on GPU/MPS OOM.",
 )
+@click.option(
+    "--protect-text",
+    is_flag=True,
+    default=False,
+    help="Preserve detected text (incl. CJK) via Differential Diffusion. SDXL default pipeline only.",
+)
 @click.pass_context
 def cmd_all(
     ctx: click.Context,
@@ -687,6 +701,7 @@ def cmd_all(
     hf_token: str | None,
     humanize: float,
     max_resolution: int,
+    protect_text: bool,
 ) -> None:
     """Remove ALL watermarks: visible + invisible + metadata.
 
@@ -778,6 +793,7 @@ def cmd_all(
                 num_inference_steps=steps,
                 seed=seed,
                 humanize=humanize,
+                protect_text=protect_text,
                 max_resolution=max_resolution,
             )
             console.print("    [green]✓[/] Invisible watermark removed")

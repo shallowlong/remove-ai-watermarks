@@ -125,6 +125,7 @@ class InvisibleEngine:
         seed: int | None = None,
         humanize: float = 0.0,
         protect_faces: bool = True,
+        protect_text: bool = False,
         max_resolution: int = 0,
     ) -> Path:
         """Remove invisible watermark from an image.
@@ -138,6 +139,8 @@ class InvisibleEngine:
             seed: Random seed for reproducibility.
             humanize: Intensity of Analog Humanizer film grain (0 = off).
             protect_faces: Boolean to extract and restore faces intact.
+            protect_text: Preserve detected text regions via Differential
+                Diffusion so glyphs (incl. CJK) survive the removal pass.
             max_resolution: Cap the long side (px) before diffusion. 0 (default)
                 = native resolution, no pre-downscale -- matches the hosted
                 raiw.cc backend. Set a positive value only to bound GPU/MPS
@@ -210,6 +213,7 @@ class InvisibleEngine:
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
                 seed=seed,
+                protect_text=protect_text,
             )
 
             # Optional: Face restoration & Humanizer (Phase 2 - Post-processing)

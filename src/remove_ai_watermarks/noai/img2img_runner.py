@@ -121,6 +121,96 @@ def run_img2img_with_mps_fallback(
         raise
 
 
+def run_differential(
+    pipeline: Any,
+    image: Image.Image,
+    change_map: Any,
+    strength: float,
+    num_inference_steps: int,
+    guidance_scale: float,
+    generator: Any,
+    device: str,
+    set_progress: Callable[[str], None],
+) -> Image.Image:
+    """Run the SDXL Differential-Diffusion pipeline and return the image.
+
+    Unlike standard img2img, the differential pipeline needs pre-processed image
+    tensors plus a per-pixel change map (HxW float32 in [0, 1]); white preserves
+    the original pixels, black regenerates them. Runs without a step callback --
+    the community pipeline's callback signature differs across diffusers
+    versions, and a protect-text pass is short.
+    """
+    import torch
+
+    image_tensor = pipeline.image_processor.preprocess(image).to(device)
+    map_tensor = torch.from_numpy(change_map)[None].to(device)  # pyright: ignore[reportPrivateImportUsage, reportUnknownMemberType]
+    set_progress(f"Running protected regeneration ({device}, strength={strength})...")
+    result = pipeline(
+        prompt="",
+        image=image_tensor,
+        original_image=image_tensor,
+        map=map_tensor,
+        strength=strength,
+        num_inference_steps=num_inference_steps,
+        guidance_scale=guidance_scale,
+        generator=generator,
+    )
+    return result.images[0]
+
+
+def run_differential_with_mps_fallback(
+    load_pipeline: Callable[[], Any],
+    image: Image.Image,
+    change_map: Any,
+    strength: float,
+    num_inference_steps: int,
+    guidance_scale: float,
+    generator: Any,
+    device: str,
+    set_progress: Callable[[str], None],
+    *,
+    reload_on_cpu: Callable[[], Any],
+) -> tuple[Image.Image, str]:
+    """Run differential img2img; on MPS error, fall back to CPU.
+
+    Returns:
+        (result_image, final_device) -- device may change to ``"cpu"`` on fallback.
+    """
+    pipeline = load_pipeline()
+    try:
+        img = run_differential(
+            pipeline,
+            image,
+            change_map,
+            strength,
+            num_inference_steps,
+            guidance_scale,
+            generator,
+            device,
+            set_progress,
+        )
+        return img, device
+    except RuntimeError as error:
+        if device == "mps" and is_mps_error(error):
+            logger.warning("MPS error detected: %s. Falling back to CPU.", error)
+            set_progress("MPS error! Clearing cache and retrying on CPU...")
+            _try_clear_mps_cache()
+            pipeline = reload_on_cpu()
+            img = run_differential(
+                pipeline,
+                image,
+                change_map,
+                strength,
+                num_inference_steps,
+                guidance_scale,
+                None,
+                "cpu",
+                set_progress,
+            )
+            return img, "cpu"
+        raise
+
+
 def _call_pipeline(
     pipeline: Any,
     image: Image.Image,

@@ -229,6 +229,13 @@ def get_device() -> str:
 # Keep legacy name available for backwards compatibility
 _detect_model_profile_from_id = detect_model_profile
 
+# SDXL Differential-Diffusion community pipeline, pinned to the installed
+# diffusers version so the fetched pipeline code matches the library (see #21).
+# Diffusers' dynamic-module loader resolves ``custom_revision`` against the
+# package version string (``0.38.0``), NOT the GitHub git tag (``v0.38.0``).
+_DIFF_PIPELINE_NAME = "pipeline_stable_diffusion_xl_differential_img2img"
+_DIFF_PIPELINE_REVISION = "0.38.0"
+
 
 class WatermarkRemover:
     """Remove watermarks from images using diffusion model regeneration.
@@ -271,6 +278,7 @@ class WatermarkRemover:
             self.torch_dtype = torch_dtype
 
         self._pipeline: AutoImg2ImgPipeline | None = None
+        self._diff_pipeline: Any = None
         self._ctrlregen_engine: Any = None
         self._progress_callback = progress_callback
         self.hf_token: str | None = hf_token or os.environ.get("HF_TOKEN")
@@ -379,6 +387,7 @@ class WatermarkRemover:
         num_inference_steps: int = 50,
         guidance_scale: float | None = None,
         seed: int | None = None,
+        protect_text: bool = False,
     ) -> Path:
         """Remove watermark from an image using regeneration attack.
 
@@ -389,6 +398,8 @@ class WatermarkRemover:
             num_inference_steps: Number of denoising steps.
             guidance_scale: Classifier-free guidance scale.
             seed: Random seed for reproducibility.
+            protect_text: Preserve detected text regions via Differential
+                Diffusion (SDXL default profile only). Off by default.
 
         Returns:
             Path to the cleaned image.
@@ -437,7 +448,21 @@ class WatermarkRemover:
                 guidance_scale,
                 generator,
             )
+        elif protect_text and self._can_protect_text():
+            cleaned_image = self._run_differential(
+                init_image,
+                strength,
+                num_inference_steps,
+                guidance_scale,
+                generator,
+            )
         else:
+            if protect_text:
+                logger.warning(
+                    "protect_text requested but unavailable "
+                    "(needs the SDXL default model and the cv2 text detector); "
+                    "running standard img2img."
+                )
             cleaned_image = self._run_img2img(
                 init_image,
                 strength,
@@ -519,6 +544,95 @@ class WatermarkRemover:
         self.torch_dtype = torch.float32  # type: ignore[assignment]
         self._pipeline = None
         return self._load_pipeline()
+
+    # ── Text-protected differential runner ───────────────────────────
+
+    def _can_protect_text(self) -> bool:
+        """True when text protection can run: SDXL default model + cv2 detector."""
+        from remove_ai_watermarks import text_protector
+
+        return self.model_id == self.DEFAULT_MODEL_ID and text_protector.is_available()
+
+    def _load_differential_pipeline(self) -> Any:
+        """Load the SDXL Differential-Diffusion community pipeline lazily."""
+        if self._diff_pipeline is None:
+            from diffusers import DiffusionPipeline
+
+            self._set_progress("Loading Differential-Diffusion pipeline (protect-text)...")
+            use_fp16 = self.device in {"mps", "cuda"}
+            load_kwargs: dict[str, Any] = {
+                "custom_pipeline": _DIFF_PIPELINE_NAME,
+                "custom_revision": _DIFF_PIPELINE_REVISION,
+                "torch_dtype": torch.float16 if use_fp16 else torch.float32,  # type: ignore[attr-defined]
+                "use_safetensors": True,
+            }
+            if use_fp16:
+                load_kwargs["variant"] = "fp16"
+            if self.hf_token:
+                load_kwargs["token"] = self.hf_token
+
+            pipeline = DiffusionPipeline.from_pretrained(self.model_id, **load_kwargs).to(self.device)
+            # The differential pipeline upcasts the SDXL VAE to fp32 internally
+            # (the fp16 VAE decodes to NaN/black otherwise), so we add no extra
+            # VAE handling here. Attention slicing is also left off on MPS: it
+            # produced NaN latents with this pipeline, and the protect-text pass
+            # is short enough not to need it.
+            with contextlib.suppress(Exception):
+                pipeline.set_progress_bar_config(disable=True)
+            self._diff_pipeline = pipeline
+        return self._diff_pipeline
+
+    def _reload_differential_on_cpu(self) -> Any:
+        """Reload the differential pipeline on CPU after an MPS failure."""
+        self.device = "cpu"
+        self.torch_dtype = torch.float32  # type: ignore[assignment]
+        self._diff_pipeline = None
+        return self._load_differential_pipeline()
+
+    def _run_differential(
+        self,
+        init_image: Image.Image,
+        strength: float,
+        num_inference_steps: int,
+        guidance_scale: float,
+        generator: Any,
+    ) -> Image.Image:
+        """Run differential img2img that preserves detected text regions."""
+        import cv2
+        import numpy as np
+
+        from remove_ai_watermarks import text_protector
+
+        self._set_progress("Detecting text regions to protect (protect-text)...")
+        bgr = cv2.cvtColor(np.array(init_image), cv2.COLOR_RGB2BGR)
+        try:
+            boxes = text_protector.TextProtector().detect_text_boxes(bgr)
+        except Exception as exc:
+            logger.warning("Text detection failed (%s); running standard img2img.", exc)
+            return self._run_img2img(init_image, strength, num_inference_steps, guidance_scale, generator)
+
+        width, height = init_image.size
+        change_map = text_protector.build_change_map(boxes, height, width)
+        self._set_progress(f"Protecting {len(boxes)} text region(s) via Differential Diffusion...")
+
+        from remove_ai_watermarks.noai.img2img_runner import run_differential_with_mps_fallback
+
+        result_image, final_device = run_differential_with_mps_fallback(
+            load_pipeline=self._load_differential_pipeline,
+            image=init_image,
+            change_map=change_map,
+            strength=strength,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            generator=generator,
+            device=self.device,
+            set_progress=self._set_progress,
+            reload_on_cpu=self._reload_differential_on_cpu,
+        )
+        if final_device != self.device:
+            self.device = final_device
+            self.torch_dtype = torch.float32  # type: ignore[assignment]
+        return result_image
 
     # ── CtrlRegen runner ─────────────────────────────────────────────
 
