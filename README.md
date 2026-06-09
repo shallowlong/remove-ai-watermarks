@@ -294,7 +294,7 @@ remove-ai-watermarks invisible image.png -o clean.png --humanize 4.0 --unsharp 0
 # GPU/MPS, cap the long side: --max-resolution 2048
 # Strength is vendor-adaptive by default (OpenAI 0.10 / Google 0.15); override
 # with --strength. To preserve text/face structure, use --pipeline controlnet
-# Or let it choose: --auto picks the pipeline, face restore, and an adaptive polish
+# Or let it choose: --auto picks the pipeline and an adaptive polish
 # from the image content (controlnet when there is text/structure, polish that
 # restores the input's detail level while sparing text). Every choice is
 # overridable: --pipeline and --no-adaptive-polish win over the auto pick.

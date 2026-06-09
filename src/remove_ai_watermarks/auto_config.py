@@ -8,11 +8,14 @@ host (image work there OOM-crashes the container).
 
 Routing is **quality-priority**: ControlNet (text/face-structure preservation) is the
 default; it is only skipped for a clearly structure-less image (no face, no text,
-near-zero edges), where plain SDXL is cheaper and just as good. PhotoMaker face
-restoration is enabled when a face is present. When a smoothing pass (controlnet or
-face restore) ran, the **adaptive polish** (``humanizer.adaptive_polish``) restores
-the input's detail level -- a capped unsharp + edge-masked grain targeting the input's
-Laplacian variance -- to counter the over-smoothed "AI look". It is self-limiting on
+near-zero edges), where plain SDXL is cheaper and just as good. A detected face only
+routes to controlnet (canny preserves face STRUCTURE, not identity); there is no
+identity restoration -- the whole face-restore family was removed (it regenerated the
+face via SDXL and looked MORE AI-generated, see
+docs/synthid-robust-identity-research-2026-06-08.md). When the controlnet smoothing
+pass ran, the **adaptive polish** (``humanizer.adaptive_polish``) restores the input's
+detail level -- a capped unsharp + edge-masked grain targeting the input's Laplacian
+variance -- to counter the over-smoothed "AI look". It is self-limiting on
 text/graphics (already high-frequency, so almost no polish) and spares text/edges by
 masking the grain.
 
@@ -71,7 +74,7 @@ _DBNET_INPUT_SIDE = 736  # square input, multiple of 32 (PP-OCRv3 default)
 _DBNET_MEAN = (122.67891434, 116.66876762, 104.00698793)  # ImageNet mean * 255
 _dbnet: Any = None  # lazy singleton; set to False after a load failure (-> MSER fallback)
 
-# When a smoothing pass ran (controlnet or face restore), the adaptive polish
+# When the controlnet smoothing pass ran, the adaptive polish
 # (humanizer.adaptive_polish) restores the input's detail level, sparing text --
 # replacing the old fixed unsharp/grain which over-/under-corrected and speckled text.
 _UPSCALE_FLOOR = 1024

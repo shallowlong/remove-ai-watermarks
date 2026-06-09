@@ -173,7 +173,7 @@ _auto_option = click.option(
     "--auto",
     is_flag=True,
     default=False,
-    help="Auto-pick the pipeline, face restore, and adaptive polish from image content. "
+    help="Auto-pick the pipeline and adaptive polish from image content. "
     "Every choice is overridable -- an explicit --pipeline / --adaptive-polish "
     "always wins. EXPERIMENTAL.",
 )
