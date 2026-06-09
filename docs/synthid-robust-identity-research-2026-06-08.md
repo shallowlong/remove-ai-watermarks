@@ -127,3 +127,59 @@ Six claims were refuted in adversarial verification, two of them load-bearing: A
 - [source](https://github.com/askerlee/AdaFace-dev)
 - [source](https://openreview.net/forum?id=Hc2ZwCYgmB)
 - [source](https://github.com/tencent-ailab/IP-Adapter/wiki/IP%E2%80%90Adapter%E2%80%90Face)
+
+## Empirical follow-up (2026-06-08, end of session)
+
+After the research synthesis above, InstantID was integrated end-to-end and cert-swept
+on Modal A100 in two phases:
+
+1. **Phase 1: InstantID txt2img per-face crop + composite.** Per-face InstantID
+   txt2img with the upstream `pipeline_stable_diffusion_xl_instantid`, ArcFace
+   embedding from the original face, landmark stick figure. Three composite
+   iterations:
+   - v1 (rectangular Gaussian alpha on the 2x square_box around each face):
+     visible patchwork on group photos, generated 1024 backgrounds clashing.
+   - v2 (tight crop on YuNet-detected face in the generated 1024 + elliptical
+     alpha 0.45*bw x 0.55*bh + soft feather): ellipse axis exceeded bbox
+     vertically, clipped forehead/chin on single portrait, group still had
+     visible elliptical seams + cool-vs-warm tone clash with scene.
+   - v3 (tighter ellipse 0.32*bw x 0.42*bh + per-channel mean color match to
+     local cleaned canvas + softer feather): patchwork visually softened; faces
+     still read as studio portraits inserted into the scene, not as people
+     shot in the scene. Single portrait identity drifted (tatsunari -> "round
+     Asian male" vs original's thin face).
+2. **Phase 2: InstantID img2img on cleaned crop.** Switched to the upstream
+   `pipeline_stable_diffusion_xl_instantid_img2img` (downloaded at first use
+   from raw.githubusercontent.com; requires `trust_remote_code=True`). Same
+   ArcFace + landmark conditioning but the SDXL diffusion source is the
+   CLEANED face crop, so the diffusion sees scene lighting / shoulders /
+   shadow direction directly. Multi-face composition jumped substantially:
+   faces sit in the bar scene with matching warm tone, no more elliptical
+   seams. Single-portrait identity at the default (`strength=0.55`,
+   `ip_adapter_scale=0.8`, `controlnet_conditioning_scale=0.8`) was "similar
+   person, not exactly the original"; raising to `strength=0.7`,
+   `ip_adapter_scale=1.0`, `controlnet_scale=1.0` brought identity closer to
+   original but introduced more "SDXL gloss / clean skin" aesthetic.
+
+**Net finding for raiw.cc (load-bearing).** The fundamental issue is structural:
+ArcFace encodes "this person's general look" (ethnicity, gender, basic facial
+geometry) at 512 dimensions; SDXL decodes that embedding into pixels with the
+inherent SDXL aesthetic (smooth skin, symmetric pores, AI-photoreal look).
+Stronger identity push (higher strength / IP-Adapter scale) makes the face
+CLOSER to the embedded identity but MORE AI-looking; weaker push leaves
+identity to drift but face looks less AI-generated. There is no parameter
+setting that simultaneously recovers original identity AND looks less AI than
+the cleaned image, because the cleaned image is itself a controlnet-light
+denoise of the original (closer to original pixels) while a restore pass is a
+full SDXL regeneration (further from original pixels).
+
+**Operational conclusion.** Do not ship `--restore-faces` in any monetized
+deployment. The cleaned image from the main controlnet 0.20 pass is the
+LEAST-AI state we can reach without re-introducing SynthID; every restore
+method tested (GFPGAN-on-cleaned, PhotoMaker-V2, InstantID txt2img,
+InstantID img2img-on-cleaned at three parameter sweeps) trades original-look
+for embedding-driven regeneration and makes the face read as "AI-generated"
+rather than "the original person". The `instantid` and `photomaker` extras
+stay in the library as opt-in for research / personal use where users
+explicitly want identity regeneration; the CLI flag and module docstrings
+state the trade-off at every entry point.

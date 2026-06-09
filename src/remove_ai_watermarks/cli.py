@@ -238,31 +238,37 @@ def _warn_if_esrgan_unavailable(upscaler: str) -> None:
 def _restore_faces_options(f: Any) -> Any:
     """Attach the face-restoration flags to an invisible-pipeline command.
 
-    Two methods. ``instantid`` (default; the `instantid` extra) regenerates each
-    face from an ArcFace embedding + landmark ControlNet -- semantic identity
-    plus weak spatial control, no original pixels. ``photomaker`` (the
-    `photomaker` extra) uses PhotoMaker-V2's CLIP+ArcFace dual encoder.
-    **BOTH ARE NON-COMMERCIAL**: they pull InsightFace antelopev2 / buffalo_l
-    model packs at runtime, which are research-only. A paid service (raiw.cc,
-    any monetized SaaS) MUST NOT use this flag.
+    Both methods REGENERATE the face from an ArcFace embedding via SDXL diffusion
+    -- they do NOT recover original pixels. Every output face pixel is
+    diffusion-fresh, so the regenerated face inherently looks MORE AI-generated
+    than the cleaned image (gloss, symmetric pores, SDXL "clean skin"
+    aesthetic). For production face preservation, leave the flag OFF and use
+    the cleaned image as-is. The two methods are kept for research / personal
+    use where users explicitly want identity regeneration. **BOTH are
+    NON-COMMERCIAL**: they pull InsightFace antelopev2 / buffalo_l model packs
+    which are research-only. A paid service (raiw.cc, any monetized SaaS) MUST
+    NOT use this flag.
     """
     method = click.option(
         "--restore-faces-method",
         type=click.Choice(["instantid", "photomaker"]),
         default="instantid",
-        help="Face-restore mechanism. 'instantid' (default) uses InstantID's ArcFace + "
-        "landmark ControlNet for stronger identity fidelity on single portraits. "
-        "'photomaker' uses PhotoMaker-V2's CLIP+ArcFace dual encoder. **BOTH are "
-        "NON-COMMERCIAL** (InsightFace antelopev2 / buffalo_l model packs are "
-        "research-only). Pick whichever extra you've installed; for personal / research "
-        "use only. Do NOT use in a paid service.",
+        help="Face-regeneration mechanism (no method recovers original pixels; both "
+        "REGENERATE the face via SDXL). 'instantid' (default) uses InstantID img2img on "
+        "the cleaned crop with ArcFace + landmark ControlNet. 'photomaker' uses "
+        "PhotoMaker-V2 txt2img + CLIP+ArcFace dual encoder. **BOTH are NON-COMMERCIAL** "
+        "(InsightFace antelopev2 / buffalo_l packs are research-only). For personal / "
+        "research use only.",
     )(f)
     return click.option(
         "--restore-faces/--no-restore-faces",
         default=False,
-        help="EXPERIMENTAL, opt-in, **NON-COMMERCIAL**. Restore face identity via the "
-        "chosen --restore-faces-method (default: instantid); off by default, auto-skips "
-        "when no face is detected or the chosen extra is absent.",
+        help="EXPERIMENTAL, opt-in, **NON-COMMERCIAL**. **REGENERATES the face** (does "
+        "NOT recover original pixels) via the chosen --restore-faces-method; the "
+        "regenerated face looks more AI-generated than the cleaned image. Off by "
+        "default; auto-skips when no face is detected or the chosen extra is absent. "
+        "For production face preservation leave this OFF and use the cleaned image "
+        "as-is.",
     )(method)
 
 
